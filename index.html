@@ -151,9 +151,9 @@ const CLASSES={
 const CH={},CH_BY={};
 for(const [cid,C] of Object.entries(CLASSES)){CH_BY[cid]=[];C.trims.forEach((tr,t)=>tr.forEach(([title,h],i)=>{const c={id:`${cid}-${t}-${i}`,t,title,h};CH[c.id]=c;CH_BY[cid].push(c)}))}
 /* emploi du temps : [jour(0=dim), début, fin, classe, salle] */
-const TT=[[1,'14:00','15:00','c4','14'],[1,'15:00','16:00','c1','06'],[2,'10:00','12:00','c3','15'],
+const DEFAULT_TT=[[2,'10:00','12:00','c3','15'],[2,'14:00','15:00','c4','14'],[2,'15:00','16:00','c1','02'],[2,'16:00','17:00','c1','26'],
  [3,'08:00','10:00','c1','04'],[3,'10:00','12:00','c3','11'],[4,'08:00','10:00','c4','02'],
- [6,'08:00','10:00','c4','16'],[6,'10:00','11:00','c3','13'],[6,'11:00','12:00','c1','09']];
+ [6,'08:00','10:00','c4','16'],[6,'11:00','12:00','c3','04']];
 const TYPES=['Cours','Exercices / TD','Devoir surveillé','Correction de devoir','Révision','Évaluation'];
 
 /* ---------- État ---------- */
@@ -163,6 +163,8 @@ const KEY=VIEW?'cahier_view':'cahier_v1';
 const fresh=()=>({sessions:[],courses:{},updated:0,settings:{teacher:'Othman Bechir',school:'Lycée Ibn Khaldoun Oudhref',year:'2026-2027',dbUrl:'',apiKey:'',email:'',password:''}});
 let S;try{S=JSON.parse(localStorage.getItem(KEY))||fresh()}catch(e){S=fresh()}
 S.settings=Object.assign(fresh().settings,S.settings);S.courses=S.courses||{};
+if(!Array.isArray(S.timetable)||!S.timetable.length)S.timetable=DEFAULT_TT.map(x=>x.slice());
+let TT=S.timetable;
 let tab=VIEW?'cahier':'today',fClass='all',deferred=null,syncMsg='',syncErr=false,pending=false;
 function save(){S.updated=Date.now();persist();schedulePush()}
 function persist(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
@@ -199,7 +201,7 @@ function vToday(){
   h+=`<p class="muted">Pas de cours aujourd’hui.${nx?` Prochain cours : ${DAYS[nx[0]]} à ${nx[1]} (${CLASSES[nx[3]].short}).`:''}</p>`;
  }
  slots.forEach(t=>{const C=CLASSES[t[3]],s=findSession(t[3],td,t[1]);
-  h+=`<div class="slot" style="--c:${C.color}"><div class="t">${t[1]}–${t[2]}</div><div class="i"><b>${C.short}</b>Salle ${t[4]}${s?` · ${esc(CH[s.chapter]?.title||s.type)}`:''}</div>
+  h+=`<div class="slot" style="--c:${C.color}"><div class="t">${t[1]}–${t[2]}</div><div class="i"><b>${C.short}</b>${t[4]?'Salle '+esc(t[4]):'—'}${s?` · ${esc(CH[s.chapter]?.title||s.type)}`:''}</div>
   ${s?`<button class="btn ok" data-act="edit" data-id="${s.id}">Rempli ✓</button>`:`<button class="btn" data-act="fill" data-c="${t[3]}" data-d="${td}" data-s="${t[1]}" data-e="${t[2]}">Remplir</button>`}</div>`});
  const late=[];
  for(let i=1;i<=14&&late.length<8;i++){const d=new Date(now);d.setDate(d.getDate()-i);const ds=ymd(d);
@@ -228,7 +230,7 @@ function vProgress(){
 
 function vSettings(){
  const c=S.settings,link=shareLink();
- return `<div class="card"><h3>Identité (en-tête des impressions)</h3>
+ return ttCard()+`<div class="card"><h3>Identité (en-tête des impressions)</h3>
  <label>Enseignant</label><input data-set="teacher" value="${esc(c.teacher)}">
  <label>Établissement</label><input data-set="school" value="${esc(c.school)}">
  <label>Année scolaire</label><input data-set="year" value="${esc(c.year)}"></div>
@@ -245,6 +247,20 @@ function vSettings(){
  <input type="file" id="file" accept="application/json,.json" class="vh">
  ${deferred?`<div class="actions"><button class="btn" data-act="install">Installer l’application</button></div>`:''}</div>`}
 
+const DAYN=['Dimanche','Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi'];
+const dayKey=d=>d===0?7:d;
+function ttCard(){const rows=S.timetable.map((t,i)=>({t,i})).sort((a,b)=>dayKey(a.t[0])-dayKey(b.t[0])||a.t[1].localeCompare(b.t[1]));
+ return `<div class="card"><h3>Emploi du temps</h3><p class="muted">Ces créneaux préparent automatiquement les séances de chaque classe.</p>`+
+ (rows.length?rows.map(({t,i})=>`<div class="crow" style="align-items:center"><span><b>${DAYN[t[0]]}</b> ${t[1]}–${t[2]} · ${CLASSES[t[3]].short}${t[4]?' · salle '+esc(t[4]):''}</span><button class="mini" data-act="ttedit" data-i="${i}">Modifier</button></div>`).join(''):'<p class="muted">Aucun créneau.</p>')+
+ `<div class="actions"><button class="btn" data-act="ttnew">Ajouter un créneau</button><button class="btn alt" data-act="ttreset">Emploi du temps officiel</button></div></div>`}
+function openSlot(i){const t=i==null?[2,'08:00','09:00','c4','']:S.timetable[i];
+ $('#sheet').innerHTML=`<h2>${i==null?'Nouveau créneau':'Modifier le créneau'}</h2>
+ <label>Jour</label><select id="sd">${[1,2,3,4,5,6,0].map(d=>`<option value="${d}"${d===t[0]?' selected':''}>${DAYN[d]}</option>`).join('')}</select>
+ <label>Classe</label><select id="sc">${Object.entries(CLASSES).map(([k,C])=>`<option value="${k}"${k===t[3]?' selected':''}>${esc(C.name)}</option>`).join('')}</select>
+ <div class="row"><div><label>Début</label><input type="time" id="ss" value="${t[1]}"></div><div><label>Fin</label><input type="time" id="se" value="${t[2]}"></div></div>
+ <label>Salle (facultatif)</label><input id="sr" value="${esc(t[4])}">
+ <div class="actions"><button class="btn" data-act="ttsave" data-i="${i==null?'':i}">Enregistrer</button><button class="btn alt" data-act="close">Annuler</button>${i!=null?`<button class="btn red" data-act="ttdel" data-i="${i}">Supprimer</button>`:''}</div>`;
+ $('#sheetWrap').hidden=false}
 const VIEWS={today:vToday,cahier:vCahier,progress:vProgress,settings:vSettings};
 function render(){
  $('#sub').textContent=`Mathématiques · ${S.settings.school} · ${S.settings.year}`;
@@ -352,7 +368,7 @@ async function token(){const c=S.settings;if(tok.v&&Date.now()<tok.exp)return to
  const j=await r.json();if(!r.ok)throw new Error(j.error?.message||'Connexion refusée');tok={v:j.idToken,exp:Date.now()+50*60000};return tok.v}
 async function push(){const c=S.settings;if(VIEW||!c.dbUrl||!c.apiKey||!c.email||!c.password)return;
  try{setSync('Envoi en cours…');const t=await token();
-  const body={updated:S.updated,settings:{teacher:c.teacher,school:c.school,year:c.year},courses:S.courses,sessions:Object.fromEntries(S.sessions.map(s=>[s.id,s]))};
+  const body={updated:S.updated,settings:{teacher:c.teacher,school:c.school,year:c.year},courses:S.courses,timetable:S.timetable.map(([d,s,e,c,r])=>({d,s,e,c,r})),sessions:Object.fromEntries(S.sessions.map(s=>[s.id,s]))};
   const r=await fetch(base(c.dbUrl)+'/cahier.json?auth='+encodeURIComponent(t),{method:'PUT',body:JSON.stringify(body)});
   if(!r.ok)throw new Error('Erreur '+r.status);pending=false;setSync('Synchronisé à '+new Date().toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}))}
  catch(e){pending=true;tok={v:'',exp:0};setSync('Non synchronisé : '+e.message,true)}}
@@ -360,7 +376,7 @@ let pt;function schedulePush(){clearTimeout(pt);pt=setTimeout(push,800)}
 async function pull(url){const r=await fetch(base(url)+'/cahier.json',{cache:'no-store'});if(!r.ok)throw new Error('Erreur '+r.status);return r.json()}
 function applyRemote(j){if(!j)return false;
  S.sessions=Object.values(j.sessions||{}).map(s=>Object.assign({content:'',homework:'',chapter:'',type:'Cours'},s));
- S.courses=Object.fromEntries(Object.entries(j.courses||{}).map(([k,v])=>[k,{items:Object.values((v&&v.items)||{})}]));S.updated=j.updated||0;if(j.settings){['teacher','school','year'].forEach(k=>{if(j.settings[k])S.settings[k]=j.settings[k]})}
+ S.courses=Object.fromEntries(Object.entries(j.courses||{}).map(([k,v])=>[k,{items:Object.values((v&&v.items)||{})}]));if(j.timetable){const tt=Object.values(j.timetable).map(o=>[+o.d,o.s,o.e,o.c,o.r||'']);if(tt.length){S.timetable=tt;TT=S.timetable}}S.updated=j.updated||0;if(j.settings){['teacher','school','year'].forEach(k=>{if(j.settings[k])S.settings[k]=j.settings[k]})}
  persist();return true}
 async function viewerRefresh(){try{if(applyRemote(await pull(VIEW)))render()}catch(e){toast('Hors ligne – dernière version affichée')}}
 
@@ -446,8 +462,14 @@ const ACT={
   try{if(applyRemote(await pull(u))){render();toast('Données récupérées')}else toast('Le serveur est vide')}catch(e){toast('Échec : '+e.message)}},
  copy:()=>navigator.clipboard.writeText(shareLink()).then(()=>toast('Lien copié')),
  share:()=>navigator.share?navigator.share({title:'Cahier de textes – Mathématiques',url:shareLink()}).catch(()=>{}):ACT.copy(),
- export:()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify({sessions:S.sessions,courses:S.courses,settings:{teacher:S.settings.teacher,school:S.settings.school,year:S.settings.year}},null,1)],{type:'application/json'}));a.download='cahier-de-textes-'+today()+'.json';a.click()},
+ export:()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify({sessions:S.sessions,courses:S.courses,timetable:S.timetable,settings:{teacher:S.settings.teacher,school:S.settings.school,year:S.settings.year}},null,1)],{type:'application/json'}));a.download='cahier-de-textes-'+today()+'.json';a.click()},
  import:()=>$('#file').click(),
+ ttnew:()=>openSlot(null),ttedit:el=>openSlot(+el.dataset.i),
+ ttsave:el=>{const i=el.dataset.i===''?null:+el.dataset.i,t=[+$('#sd').value,$('#ss').value,$('#se').value,$('#sc').value,$('#sr').value.trim()];
+  if(!t[1]||!t[2]||toMin(t[2])<=toMin(t[1]))return toast('Vérifiez les heures');
+  if(i==null)S.timetable.push(t);else S.timetable[i]=t;save();closeSheet();render();toast('Emploi du temps enregistré')},
+ ttdel:el=>{if(confirm('Supprimer ce créneau ?')){S.timetable.splice(+el.dataset.i,1);save();closeSheet();render()}},
+ ttreset:()=>{if(confirm('Remplacer par l’emploi du temps officiel (lundi : journée pédagogique) ?')){S.timetable.splice(0,S.timetable.length,...DEFAULT_TT.map(x=>x.slice()));save();render();toast('Emploi du temps rétabli')}},
  course:el=>openCourse(el.dataset.ch),pdfpick:()=>$('#pdf').click(),coursesave:el=>saveCourse(el.dataset.ch),
  coursedel:el=>{if(confirm('Retirer le cours de ce chapitre ?')){delete S.courses[el.dataset.ch];save();closeSheet();render()}},
  install:async()=>{if(deferred){deferred.prompt();await deferred.userChoice;deferred=null;render()}}
@@ -463,7 +485,7 @@ document.addEventListener('change',e=>{
  if(e.target.id==='cb'&&EXT)fillFromExt();
  if(e.target.id==='file'&&e.target.files[0]){const r=new FileReader();r.onload=()=>{try{const j=JSON.parse(r.result);if(!Array.isArray(j.sessions)&&!j.sessions)throw 0;
   const arr=Array.isArray(j.sessions)?j.sessions:Object.values(j.sessions);if(!confirm(`Importer ${arr.length} séance(s) et remplacer les données actuelles ?`))return;
-  S.sessions=arr;if(j.courses)S.courses=j.courses;save();render();toast('Import terminé')}catch(x){toast('Fichier invalide')}};r.readAsText(e.target.files[0])}});
+  S.sessions=arr;if(j.courses)S.courses=j.courses;if(Array.isArray(j.timetable)&&j.timetable.length){S.timetable=j.timetable;TT=S.timetable}save();render();toast('Import terminé')}catch(x){toast('Fichier invalide')}};r.readAsText(e.target.files[0])}});
 window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferred=e;if(tab==='settings')render()});
 window.addEventListener('online',()=>{if(pending)push();if(VIEW)viewerRefresh()});
 window.addEventListener('hashchange',()=>location.reload());
