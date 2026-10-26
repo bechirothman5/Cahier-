@@ -134,7 +134,7 @@ const bullets=t=>String(t||'').split('\n').map(l=>l.replace(/^\s*[-•*·]\s*/,'
 const DAYS=['dimanche','lundi','mardi','mercredi','jeudi','vendredi','samedi'];
 
 /* ---------- Données du programme (répartitions officielles, Sept. 2024) ---------- */
-const CLASSES={
+const DEFAULT_OBJ={
  c4:{name:'4ème Sciences expérimentales 1',short:'4 Sc Exp 1',color:'#0e7490',trims:[
   [['Continuité et limites',6],['Suites réelles',7],['Dérivabilité',7],['Fonctions réciproques',7],['Nombres complexes',8],['Équations à coefficients complexes',7],['Produit scalaire, produit vectoriel dans l’espace',7],['Devoirs et corrections',6]],
   [['Étude de fonctions',7],['Primitives',5],['Intégrales',5],['Fonctions logarithmes',6],['Fonctions exponentielles',4],['Équations de droites, de plans et de sphères',6],['Probabilité sur un ensemble fini',5],['Devoirs et corrections',7]],
@@ -148,8 +148,14 @@ const CLASSES={
   [['Fonctions linéaires',4],['Équations et inéquations du premier degré à une inconnue',5],['Fonctions affines',4],['Vecteurs et translations',7],['Somme de deux vecteurs – Vecteurs colinéaires',7],['Devoirs et corrections',6]],
   [['Système de deux équations à deux inconnues',6],['Exploitation de l’information',4],['Activités dans un repère',6],['Quart de tour',4],['Sections planes d’un solide',4],['Devoirs et corrections',4]]]}
 };
-const CH={},CH_BY={};
-for(const [cid,C] of Object.entries(CLASSES)){CH_BY[cid]=[];C.trims.forEach((tr,t)=>tr.forEach(([title,h],i)=>{const c={id:`${cid}-${t}-${i}`,t,title,h};CH[c.id]=c;CH_BY[cid].push(c)}))}
+const clone=x=>JSON.parse(JSON.stringify(x));
+const DEFAULT_CLASSES=Object.entries(DEFAULT_OBJ).map(([id,c])=>Object.assign({id},c));
+const TEMPLATES={'1ere':{label:'1ère année secondaire (4 h)',trims:DEFAULT_OBJ.c1.trims},'3sc':{label:'3ème Sciences expérimentales (5 h)',trims:DEFAULT_OBJ.c3.trims},'4sc':{label:'4ème Sciences expérimentales (5 h)',trims:DEFAULT_OBJ.c4.trims}};
+const CLASSES={},CH={},CH_BY={};
+function rebuild(){[CLASSES,CH,CH_BY].forEach(o=>Object.keys(o).forEach(k=>delete o[k]));
+ S.classes.forEach(C=>{CLASSES[C.id]=C;CH_BY[C.id]=[];(C.trims||[]).forEach((tr,t)=>(tr||[]).forEach(([title,h],i)=>{const c={id:`${C.id}-${t}-${i}`,t,title,h:+h||0};CH[c.id]=c;CH_BY[C.id].push(c)}))})}
+const firstClass=()=>(S.classes[0]||{}).id||'';
+const pct=(a,b)=>b>0?Math.min(100,a/b*100):0;
 /* emploi du temps : [jour(0=dim), début, fin, classe, salle] */
 const DEFAULT_TT=[[2,'10:00','12:00','c3','15'],[2,'14:00','15:00','c4','14'],[2,'15:00','16:00','c1','02'],[2,'16:00','17:00','c1','26'],
  [3,'08:00','10:00','c1','04'],[3,'10:00','12:00','c3','11'],[4,'08:00','10:00','c4','02'],
@@ -160,11 +166,14 @@ const TYPES=['Cours','Exercices / TD','Devoir surveillé','Correction de devoir'
 const m=location.hash.match(/#v=([^&]+)/);
 let VIEW=null;try{VIEW=m?atob(decodeURIComponent(m[1])):null}catch(e){}
 const KEY=VIEW?'cahier_view':'cahier_v1';
-const fresh=()=>({sessions:[],courses:{},updated:0,settings:{teacher:'Othman Bechir',school:'Lycée Ibn Khaldoun Oudhref',year:'2026-2027',dbUrl:'',apiKey:'',email:'',password:''}});
-let S;try{S=JSON.parse(localStorage.getItem(KEY))||fresh()}catch(e){S=fresh()}
+const yr=()=>{const d=new Date(),y=d.getFullYear();return d.getMonth()>=7?y+'-'+(y+1):(y-1)+'-'+y};
+const fresh=()=>({sessions:[],courses:{},classes:[],timetable:[],updated:0,settings:{teacher:'',school:'',subject:'Mathématiques',year:yr(),dbUrl:'',apiKey:'',email:'',password:''}});
+let S,HAD=false;try{const raw=localStorage.getItem(KEY);if(raw){S=JSON.parse(raw);HAD=true}}catch(e){}
+if(!S)S=fresh();
 S.settings=Object.assign(fresh().settings,S.settings);S.courses=S.courses||{};
-if(!Array.isArray(S.timetable)||!S.timetable.length)S.timetable=DEFAULT_TT.map(x=>x.slice());
-let TT=S.timetable;
+if(HAD&&!VIEW){if(!Array.isArray(S.classes))S.classes=clone(DEFAULT_CLASSES);if(!Array.isArray(S.timetable))S.timetable=DEFAULT_TT.map(x=>x.slice())}
+if(!Array.isArray(S.classes))S.classes=[];if(!Array.isArray(S.timetable))S.timetable=[];
+let TT=S.timetable;rebuild();
 let tab=VIEW?'cahier':'today',fClass='all',deferred=null,syncMsg='',syncErr=false,pending=false;
 function save(){S.updated=Date.now();persist();schedulePush()}
 function persist(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
@@ -192,12 +201,13 @@ function entry(s){
  ${ch?`<h3>${esc(ch.title)}</h3>`:''}<ul class="lines">${bullets(s.content).map(l=>`<li>${esc(l)}</li>`).join('')}</ul>
  ${s.homework?`<p class="hw"><i>À faire :</i> ${esc(s.homework)}</p>`:''}</div></article>`}
 
-function vToday(){
+function welcome(){return `<h2>Bienvenue</h2><div class="card"><p>Pour commencer, ouvrez les <b>Réglages</b> et suivez ces 3 étapes :</p><ol style="padding-left:20px;line-height:1.7"><li>Renseignez votre nom, votre établissement et votre matière.</li><li>Ajoutez vos classes, avec leur programme (chapitres et heures).</li><li>Saisissez votre emploi du temps : l’application préparera alors les séances de chaque classe.</li></ol><div class="actions"><button class="btn" data-act="tab" data-v="settings">Ouvrir les Réglages</button></div></div>`}
+function vToday(){if(!S.classes.length)return welcome();
  const now=new Date(),td=today(),wd=now.getDay();
  let h=`<h2>${esc(fmtLong(td))}</h2>`;
- const slots=TT.filter(t=>t[0]===wd).sort((a,b)=>a[1].localeCompare(b[1]));
+ const slots=TT.filter(t=>t[0]===wd&&CLASSES[t[3]]).sort((a,b)=>a[1].localeCompare(b[1]));
  if(!slots.length){
-  let n=1,nx;for(;n<=7;n++){const w=(wd+n)%7;nx=TT.filter(t=>t[0]===w)[0];if(nx)break}
+  let n=1,nx;for(;n<=7;n++){const w=(wd+n)%7;nx=TT.filter(t=>t[0]===w&&CLASSES[t[3]])[0];if(nx)break}
   h+=`<p class="muted">Pas de cours aujourd’hui.${nx?` Prochain cours : ${DAYS[nx[0]]} à ${nx[1]} (${CLASSES[nx[3]].short}).`:''}</p>`;
  }
  slots.forEach(t=>{const C=CLASSES[t[3]],s=findSession(t[3],td,t[1]);
@@ -205,12 +215,12 @@ function vToday(){
   ${s?`<button class="btn ok" data-act="edit" data-id="${s.id}">Rempli ✓</button>`:`<button class="btn" data-act="fill" data-c="${t[3]}" data-d="${td}" data-s="${t[1]}" data-e="${t[2]}">Remplir</button>`}</div>`});
  const late=[];
  for(let i=1;i<=14&&late.length<8;i++){const d=new Date(now);d.setDate(d.getDate()-i);const ds=ymd(d);
-  TT.filter(t=>t[0]===d.getDay()).forEach(t=>{if(!findSession(t[3],ds,t[1]))late.push([ds,t])})}
+  TT.filter(t=>t[0]===d.getDay()&&CLASSES[t[3]]).forEach(t=>{if(!findSession(t[3],ds,t[1]))late.push([ds,t])})}
  if(late.length){h+=`<h3 style="margin-top:22px">À rattraper</h3>`;
   late.forEach(([ds,t])=>{const C=CLASSES[t[3]];h+=`<div class="slot" style="--c:${C.color}"><div class="i"><b>${C.short}</b>${esc(fmtLong(ds))} · ${t[1]}–${t[2]}</div><button class="btn alt" data-act="fill" data-c="${t[3]}" data-d="${ds}" data-s="${t[1]}" data-e="${t[2]}">Remplir</button></div>`})}
  h+=`<h3 style="margin-top:22px">Avancement</h3>`;
  for(const [cid,C] of Object.entries(CLASSES)){const{d,p}=totals(cid);
-  h+=`<div class="card" style="--c:${C.color}"><div class="crow" style="margin:0 0 7px"><b>${esc(C.name)}</b><span>${fmtH(d)} / ${p} h</span></div><div class="bar"><i style="width:${Math.min(100,d/p*100)}%"></i></div></div>`}
+  h+=`<div class="card" style="--c:${C.color}"><div class="crow" style="margin:0 0 7px"><b>${esc(C.name)}</b><span>${fmtH(d)} / ${p} h</span></div><div class="bar"><i style="width:${pct(d,p)}%"></i></div></div>`}
  return h}
 function totals(cid){return{d:S.sessions.filter(s=>s.classId===cid).reduce((a,s)=>a+hrs(s),0),p:CH_BY[cid].reduce((a,c)=>a+c.h,0)}}
 
@@ -223,18 +233,20 @@ function vCahier(){
 
 function vProgress(){
  return Object.entries(CLASSES).map(([cid,C])=>{const{d,p}=totals(cid),dn=doneBy(cid);
-  let h=`<div class="card" style="--c:${C.color}"><h3>${esc(C.name)}</h3><div class="crow" style="margin:0 0 7px"><span>Heures effectuées</span><span><b>${fmtH(d)}</b> / ${p} h</span></div><div class="bar"><i style="width:${Math.min(100,d/p*100)}%"></i></div>`;
+  let h=`<div class="card" style="--c:${C.color}"><h3>${esc(C.name)}</h3><div class="crow" style="margin:0 0 7px"><span>Heures effectuées</span><span><b>${fmtH(d)}</b> / ${p} h</span></div><div class="bar"><i style="width:${pct(d,p)}%"></i></div>`;
   [0,1,2].forEach(t=>{h+=`<div class="trim">${['1er','2ème','3ème'][t]} trimestre</div>`;
-   CH_BY[cid].filter(c=>c.t===t).forEach(c=>{const x=dn[c.id]||0,pc=partsCount(c.id);h+=`<div class="crow ${x>=c.h-.01?'full':''}"><span>${esc(c.title)}</span><span>${fmtH(x)} / ${c.h} h</span></div>${(pc.n||!VIEW)?`<div class="crow sub"><span>${pc.n?`Parties du cours : ${pc.d}/${pc.n}`:'Aucun cours importé'}</span>${VIEW?'':`<button class="mini" data-act="course" data-ch="${c.id}">${pc.n?'Modifier':'Importer le cours'}</button>`}</div>`:''}<div class="bar" style="margin-top:4px"><i style="width:${Math.min(100,x/c.h*100)}%"></i></div>`})});
+   CH_BY[cid].filter(c=>c.t===t).forEach(c=>{const x=dn[c.id]||0,pc=partsCount(c.id);h+=`<div class="crow ${x>=c.h-.01?'full':''}"><span>${esc(c.title)}</span><span>${fmtH(x)} / ${c.h} h</span></div>${(pc.n||!VIEW)?`<div class="crow sub"><span>${pc.n?`Parties du cours : ${pc.d}/${pc.n}`:'Aucun cours importé'}</span>${VIEW?'':`<button class="mini" data-act="course" data-ch="${c.id}">${pc.n?'Modifier':'Importer le cours'}</button>`}</div>`:''}<div class="bar" style="margin-top:4px"><i style="width:${pct(x,c.h)}%"></i></div>`})});
   return h+'</div>'}).join('')}
 
 function vSettings(){
  const c=S.settings,link=shareLink();
- return ttCard()+`<div class="card"><h3>Identité (en-tête des impressions)</h3>
- <label>Enseignant</label><input data-set="teacher" value="${esc(c.teacher)}">
+ return `<div class="card"><h3>Identité (en-tête des impressions)</h3>
+ <label>Enseignant</label><input data-set="teacher" placeholder="Votre nom" value="${esc(c.teacher)}">
  <label>Établissement</label><input data-set="school" value="${esc(c.school)}">
+ <label>Matière</label><input data-set="subject" value="${esc(c.subject)}">
  <label>Année scolaire</label><input data-set="year" value="${esc(c.year)}"></div>
- <div class="card"><h3>Consultation en ligne (inspecteur, directrice, censeur)</h3>
+ ${classesCard()}${ttCard()}
+ <div class="card"><h3>Consultation en ligne (inspecteur, directeur, censeur)</h3>
  <p class="muted">Renseignez votre base Firebase : le lien de consultation permet de lire le cahier en direct, sans pouvoir le modifier.</p>
  <label>URL de la base (Realtime Database)</label><input data-set="dbUrl" inputmode="url" placeholder="https://xxxx-default-rtdb.firebaseio.com" value="${esc(c.dbUrl)}">
  <label>Clé API Web</label><input data-set="apiKey" value="${esc(c.apiKey)}">
@@ -247,13 +259,48 @@ function vSettings(){
  <input type="file" id="file" accept="application/json,.json" class="vh">
  ${deferred?`<div class="actions"><button class="btn" data-act="install">Installer l’application</button></div>`:''}</div>`}
 
+const PALETTE=['#0e7490','#6d28d9','#b45309','#be123c','#15803d','#1d4ed8','#a21caf','#475569'];
+const progToText=trims=>(trims||[]).map(tr=>(tr||[]).map(([t,h])=>`${t} ; ${h}`).join('\n')).join('\n---\n');
+function textToProg(txt){const trims=[[],[],[]];let t=0;
+ txt.split('\n').forEach(l=>{l=l.trim();if(!l)return;if(/^-{3,}$/.test(l)){if(t<2)t++;return}
+  const ix=l.lastIndexOf(';');let title=l,h=0;if(ix>=0){title=l.slice(0,ix).trim();h=parseFloat(l.slice(ix+1).replace(',','.'))||0}
+  if(title)trims[t].push([title,h])});return trims}
+function classesCard(){return `<div class="card"><h3>Mes classes</h3><p class="muted">Ajoutez vos classes avec leur programme (chapitres et heures) pour suivre l’avancement.</p>`+
+ (S.classes.length?S.classes.map(c=>`<div class="crow" style="align-items:center"><span><b style="color:${c.color}">●</b> ${esc(c.name)}</span><button class="mini" data-act="clsedit" data-id="${c.id}">Modifier</button></div>`).join(''):'<p class="muted">Aucune classe pour le moment.</p>')+
+ `<div class="actions"><button class="btn" data-act="clsnew">Ajouter une classe</button></div></div>`}
+function openClass(id){const c=id?S.classes.find(x=>x.id===id):{name:'',short:'',color:PALETTE[S.classes.length%PALETTE.length],trims:[[],[],[]]};
+ $('#sheet').innerHTML=`<h2>${id?'Modifier la classe':'Nouvelle classe'}</h2>
+ <label>Nom de la classe</label><input id="cn" placeholder="ex. 2ème Sciences 3" value="${esc(c.name)}">
+ <label>Nom court (affiché dans les listes)</label><input id="cs" placeholder="ex. 2 Sc 3" value="${esc(c.short)}">
+ <label>Couleur</label><select id="cc">${PALETTE.map(p=>`<option value="${p}" style="background:${p};color:#fff"${p===c.color?' selected':''}>${p}</option>`).join('')}</select>
+ <label>Modèle de programme</label><select id="ctp"><option value="">— Choisir un modèle (facultatif) —</option>${Object.entries(TEMPLATES).map(([k,t])=>`<option value="${k}">${esc(t.label)}</option>`).join('')}</select>
+ <label>Programme : un chapitre par ligne, « Titre ; heures »</label>
+ <textarea id="cp" placeholder="Suites réelles ; 7&#10;Dérivabilité ; 7&#10;---&#10;Primitives ; 5">${esc(progToText(c.trims))}</textarea>
+ <p class="muted">Une ligne <b>---</b> passe au trimestre suivant. Vous pouvez laisser le programme vide.</p>
+ <div class="actions"><button class="btn" data-act="clssave" data-id="${id||''}">Enregistrer</button><button class="btn alt" data-act="close">Annuler</button>${id?`<button class="btn red" data-act="clsdel" data-id="${id}">Supprimer</button>`:''}</div>`;
+ $('#sheetWrap').hidden=false;
+ $('#ctp').onchange=()=>{const t=TEMPLATES[$('#ctp').value];if(t){$('#cp').value=progToText(t.trims);if(!$('#cn').value)$('#cn').value=t.label.replace(/\s*\(.*\)/,'')}}}
+function saveClass(id){const name=$('#cn').value.trim(),short=$('#cs').value.trim()||name,color=$('#cc').value,trims=textToProg($('#cp').value);
+ if(!name)return toast('Donnez un nom à la classe');
+ let cls=id&&S.classes.find(c=>c.id===id);const old=id?CH_BY[id].slice():[];
+ if(cls)Object.assign(cls,{name,short,color,trims});else{cls={id:'k'+uid(),name,short,color,trims};S.classes.push(cls)}
+ rebuild();
+ if(id){const used=new Set(),map={};old.forEach(o=>{const n=CH_BY[id].find(c=>c.title===o.title&&!used.has(c.id));if(n){used.add(n.id);map[o.id]=n.id}});
+  S.sessions.forEach(s=>{if(s.classId===id&&s.chapter){if(map[s.chapter])s.chapter=map[s.chapter];else{s.chapter='';s.parts=[]}}});
+  const nc={};Object.entries(S.courses).forEach(([k,v])=>{if(k.startsWith(id+'-')){if(map[k])nc[map[k]]=v}else nc[k]=v});S.courses=nc}
+ save();closeSheet();render();toast('Classe enregistrée')}
+function delClass(id){if(!confirm('Supprimer cette classe, ses séances et ses créneaux ?'))return;
+ S.classes=S.classes.filter(c=>c.id!==id);S.sessions=S.sessions.filter(s=>s.classId!==id);
+ for(let i=S.timetable.length-1;i>=0;i--)if(S.timetable[i][3]===id)S.timetable.splice(i,1);
+ Object.keys(S.courses).forEach(k=>{if(k.startsWith(id+'-'))delete S.courses[k]});
+ rebuild();if(fClass===id)fClass='all';save();closeSheet();render()}
 const DAYN=['Dimanche','Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi'];
 const dayKey=d=>d===0?7:d;
 function ttCard(){const rows=S.timetable.map((t,i)=>({t,i})).sort((a,b)=>dayKey(a.t[0])-dayKey(b.t[0])||a.t[1].localeCompare(b.t[1]));
  return `<div class="card"><h3>Emploi du temps</h3><p class="muted">Ces créneaux préparent automatiquement les séances de chaque classe.</p>`+
- (rows.length?rows.map(({t,i})=>`<div class="crow" style="align-items:center"><span><b>${DAYN[t[0]]}</b> ${t[1]}–${t[2]} · ${CLASSES[t[3]].short}${t[4]?' · salle '+esc(t[4]):''}</span><button class="mini" data-act="ttedit" data-i="${i}">Modifier</button></div>`).join(''):'<p class="muted">Aucun créneau.</p>')+
- `<div class="actions"><button class="btn" data-act="ttnew">Ajouter un créneau</button><button class="btn alt" data-act="ttreset">Emploi du temps officiel</button></div></div>`}
-function openSlot(i){const t=i==null?[2,'08:00','09:00','c4','']:S.timetable[i];
+ (rows.length?rows.map(({t,i})=>`<div class="crow" style="align-items:center"><span><b>${DAYN[t[0]]}</b> ${t[1]}–${t[2]} · ${(CLASSES[t[3]]||{short:'?'}).short}${t[4]?' · salle '+esc(t[4]):''}</span><button class="mini" data-act="ttedit" data-i="${i}">Modifier</button></div>`).join(''):'<p class="muted">Aucun créneau.</p>')+
+ `<div class="actions"><button class="btn" data-act="ttnew">Ajouter un créneau</button>${DEFAULT_TT.every(t=>CLASSES[t[3]])?'<button class="btn alt" data-act="ttreset">Emploi du temps officiel</button>':''}</div></div>`}
+function openSlot(i){const t=i==null?[2,'08:00','09:00',firstClass(),'']:S.timetable[i];
  $('#sheet').innerHTML=`<h2>${i==null?'Nouveau créneau':'Modifier le créneau'}</h2>
  <label>Jour</label><select id="sd">${[1,2,3,4,5,6,0].map(d=>`<option value="${d}"${d===t[0]?' selected':''}>${DAYN[d]}</option>`).join('')}</select>
  <label>Classe</label><select id="sc">${Object.entries(CLASSES).map(([k,C])=>`<option value="${k}"${k===t[3]?' selected':''}>${esc(C.name)}</option>`).join('')}</select>
@@ -263,7 +310,7 @@ function openSlot(i){const t=i==null?[2,'08:00','09:00','c4','']:S.timetable[i];
  $('#sheetWrap').hidden=false}
 const VIEWS={today:vToday,cahier:vCahier,progress:vProgress,settings:vSettings};
 function render(){
- $('#sub').textContent=`Mathématiques · ${S.settings.school} · ${S.settings.year}`;
+ $('#sub').textContent=[S.settings.subject,S.settings.school,S.settings.year].filter(Boolean).join(' · ');
  $('#badge').hidden=!VIEW;$('#fab').hidden=!!VIEW||tab==='settings';
  $('#tabs').innerHTML=TABS.map(([k,l])=>`<button class="${tab===k?'on':''}" data-act="tab" data-v="${k}"><svg viewBox="0 0 24 24">${ICON[k]}</svg>${l}</button>`).join('');
  $('#view').innerHTML=VIEWS[tab]()}
@@ -272,7 +319,7 @@ function render(){
 function chapterOptions(cid,sel){const d=doneBy(cid);let h='<option value="">— Hors programme / autre —</option>';
  [0,1,2].forEach(t=>{h+=`<optgroup label="${['1er','2ème','3ème'][t]} trimestre">`+CH_BY[cid].filter(c=>c.t===t).map(c=>`<option value="${c.id}"${c.id===sel?' selected':''}>${esc(c.title)} (${fmtH(d[c.id]||0)}/${c.h} h)</option>`).join('')+'</optgroup>'});return h}
 function openEditor(id,pre){
- const s=id?S.sessions.find(x=>x.id===id):Object.assign({classId:'c4',date:today(),start:'',end:'',chapter:'',type:'Cours',content:'',homework:'',parts:[]},pre||{});
+ const s=id?S.sessions.find(x=>x.id===id):Object.assign({classId:firstClass(),date:today(),start:'',end:'',chapter:'',type:'Cours',content:'',homework:'',parts:[]},pre||{});
  if(!id){const sl=slotFor(s.classId,s.date);if(!s.start&&sl){s.start=sl[1];s.end=sl[2]}if(!s.chapter)s.chapter=suggestChapter(s.classId)}
  $('#sheet').innerHTML=`<h2>${id?'Modifier la séance':'Nouvelle séance'}</h2>
  <label>Classe</label><select id="fc">${Object.entries(CLASSES).map(([k,C])=>`<option value="${k}"${k===s.classId?' selected':''}>${esc(C.name)}</option>`).join('')}</select>
@@ -319,11 +366,11 @@ function buildPrint(ids,from,to){
  return ids.map(cid=>{const C=CLASSES[cid],all=sorted(S.sessions.filter(s=>s.classId===cid)),num=new Map(all.map((s,i)=>[s.id,i+1]));
   const rows=all.filter(s=>(!from||s.date>=from)&&(!to||s.date<=to));
   return `<section class="pclass"><div class="ph"><div>République Tunisienne<br>Ministère de l’Éducation</div><div style="text-align:right">${esc(c.school)}<br>Année scolaire ${esc(c.year)}</div></div>
-  <div class="pt"><h2>Cahier de textes – Mathématiques</h2><p><b>Classe :</b> ${esc(C.name)} &nbsp;·&nbsp; <b>Enseignant :</b> ${esc(c.teacher)}</p>${from||to?`<p>Du ${from?fmtShort(from):'…'} au ${to?fmtShort(to):'…'}</p>`:''}</div>
+  <div class="pt"><h2>Cahier de textes – ${esc(c.subject)}</h2><p><b>Classe :</b> ${esc(C.name)} &nbsp;·&nbsp; <b>Enseignant :</b> ${esc(c.teacher)}</p>${from||to?`<p>Du ${from?fmtShort(from):'…'} au ${to?fmtShort(to):'…'}</p>`:''}</div>
   <table class="p"><thead><tr><th style="width:7%">N°</th><th style="width:17%">Date</th><th style="width:13%">Horaire</th><th>Contenu de la séance</th></tr></thead><tbody>
   ${rows.map(s=>{const ch=s.chapter&&CH[s.chapter];return `<tr><td style="text-align:center">${num.get(s.id)}</td><td>${fmtShort(s.date)}</td><td>${s.start}–${s.end}</td><td>${ch?`<b>${esc(ch.title)}</b> <i>(${esc(s.type)})</i>`:`<i>${esc(s.type)}</i>`}<ul>${bullets(s.content).map(l=>`<li>${esc(l)}</li>`).join('')}</ul>${s.homework?`<p class="hw">À faire : ${esc(s.homework)}</p>`:''}</td></tr>`}).join('')||'<tr><td colspan="4" style="text-align:center">Aucune séance sur cette période</td></tr>'}
   </tbody></table>
-  <div class="sig"><div>Visa de l’inspecteur</div><div>Visa de la directrice</div><div>Visa du censeur</div></div></section>`}).join('')}
+  <div class="sig"><div>Visa de l’inspecteur</div><div>Visa du directeur</div><div>Visa du censeur</div></div></section>`}).join('')}
 const WIN={'≤':'<=','≥':'>=','≠':'!=','→':'->','←':'<-','⇒':'=>','⇔':'<=>','−':'-','∞':'inf','×':'x','′':"'",'∈':'dans','◦':'o','√':'rac','π':'pi','ℝ':'R','ℕ':'N'};
 const T=s=>String(s??'').replace(/[^\u0000-\u00FF\u2013\u2014\u2018\u2019\u201C\u201D\u2022\u2026\u20AC]/g,c=>WIN[c]||'?');
 async function buildPdf(ids,from,to){
@@ -335,7 +382,7 @@ async function buildPdf(ids,from,to){
   doc.setFont('times','normal');doc.setFontSize(10);
   doc.text(['République Tunisienne','Ministère de l’Éducation'].map(T),14,14);
   doc.text([T(c.school),T('Année scolaire '+c.year)],196,14,{align:'right'});
-  doc.setFont('times','bold');doc.setFontSize(16);doc.text(T('Cahier de textes – Mathématiques'),105,34,{align:'center'});
+  doc.setFont('times','bold');doc.setFontSize(16);doc.text(T('Cahier de textes – '+c.subject),105,34,{align:'center'});
   doc.setFont('times','normal');doc.setFontSize(11);doc.text(T(`Classe : ${C.name}  ·  Enseignant : ${c.teacher}`),105,41,{align:'center'});
   let sy=46;if(from||to){doc.setFontSize(10);doc.text(`Du ${from?fmtShort(from):'…'} au ${to?fmtShort(to):'…'}`,105,46,{align:'center'});sy=50}
   const body=rows.map(s=>{const ch=s.chapter&&CH[s.chapter];
@@ -347,7 +394,7 @@ async function buildPdf(ids,from,to){
    headStyles:{fillColor:[225,225,225],textColor:0,fontStyle:'bold'},
    columnStyles:{0:{cellWidth:12,halign:'center'},1:{cellWidth:24},2:{cellWidth:24}},margin:{left:14,right:14,bottom:22}});
   let y=doc.lastAutoTable.finalY+8;if(y>255){doc.addPage();y=20}
-  const w=(182-8)/3;['Visa de l’inspecteur','Visa de la directrice','Visa du censeur'].forEach((t,i)=>{const x=14+i*(w+4);doc.rect(x,y,w,26);doc.setFontSize(10);doc.text(T(t),x+2,y+5)})});
+  const w=(182-8)/3;['Visa de l’inspecteur','Visa du directeur','Visa du censeur'].forEach((t,i)=>{const x=14+i*(w+4);doc.rect(x,y,w,26);doc.setFontSize(10);doc.text(T(t),x+2,y+5)})});
  const n=doc.getNumberOfPages();for(let i=1;i<=n;i++){doc.setPage(i);doc.setFontSize(9);doc.text(`Page ${i} / ${n}`,105,290,{align:'center'})}
  return doc}
 async function makePdf(mode){const cls=$('#pc').value,from=$('#pf').value,to=$('#pt').value;toast('Création du PDF…');
@@ -359,6 +406,8 @@ async function makePdf(mode){const cls=$('#pc').value,from=$('#pf').value,to=$('
 function doPrint(){const cls=$('#pc').value;$('#printArea').innerHTML=buildPrint(cls==='all'?Object.keys(CLASSES):[cls],$('#pf').value,$('#pt').value);closeSheet();setTimeout(()=>window.print(),150)}
 
 /* ---------- Synchronisation (Firebase Realtime Database via REST) ---------- */
+const clsOut=(c,n)=>({id:c.id,n,name:c.name,short:c.short,color:c.color,trims:Object.fromEntries([0,1,2].map(i=>['t'+i,((c.trims||[])[i]||[]).map(([t,h])=>({t,h}))]))});
+const clsIn=o=>({id:o.id,name:o.name,short:o.short||o.name,color:o.color||'#475569',trims:[0,1,2].map(i=>Object.values((o.trims&&o.trims['t'+i])||{}).map(x=>[x.t,+x.h||0]))});
 const base=u=>u.replace(/\/+$/,'');
 function shareLink(){const u=S.settings.dbUrl;return u?location.origin+location.pathname+'#v='+encodeURIComponent(btoa(base(u))):''}
 function setSync(t,err){syncMsg=t;syncErr=!!err;const el=$('#status');if(el){el.textContent=t;el.className='status'+(err?' err':'')}}
@@ -368,7 +417,7 @@ async function token(){const c=S.settings;if(tok.v&&Date.now()<tok.exp)return to
  const j=await r.json();if(!r.ok)throw new Error(j.error?.message||'Connexion refusée');tok={v:j.idToken,exp:Date.now()+50*60000};return tok.v}
 async function push(){const c=S.settings;if(VIEW||!c.dbUrl||!c.apiKey||!c.email||!c.password)return;
  try{setSync('Envoi en cours…');const t=await token();
-  const body={updated:S.updated,settings:{teacher:c.teacher,school:c.school,year:c.year},courses:S.courses,timetable:S.timetable.map(([d,s,e,c,r])=>({d,s,e,c,r})),sessions:Object.fromEntries(S.sessions.map(s=>[s.id,s]))};
+  const body={updated:S.updated,settings:{teacher:c.teacher,school:c.school,year:c.year,subject:c.subject},classes:Object.fromEntries(S.classes.map((c,n)=>[c.id,clsOut(c,n)])),courses:S.courses,timetable:S.timetable.map(([d,s,e,c,r])=>({d,s,e,c,r})),sessions:Object.fromEntries(S.sessions.map(s=>[s.id,s]))};
   const r=await fetch(base(c.dbUrl)+'/cahier.json?auth='+encodeURIComponent(t),{method:'PUT',body:JSON.stringify(body)});
   if(!r.ok)throw new Error('Erreur '+r.status);pending=false;setSync('Synchronisé à '+new Date().toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}))}
  catch(e){pending=true;tok={v:'',exp:0};setSync('Non synchronisé : '+e.message,true)}}
@@ -376,7 +425,8 @@ let pt;function schedulePush(){clearTimeout(pt);pt=setTimeout(push,800)}
 async function pull(url){const r=await fetch(base(url)+'/cahier.json',{cache:'no-store'});if(!r.ok)throw new Error('Erreur '+r.status);return r.json()}
 function applyRemote(j){if(!j)return false;
  S.sessions=Object.values(j.sessions||{}).map(s=>Object.assign({content:'',homework:'',chapter:'',type:'Cours'},s));
- S.courses=Object.fromEntries(Object.entries(j.courses||{}).map(([k,v])=>[k,{items:Object.values((v&&v.items)||{})}]));if(j.timetable){const tt=Object.values(j.timetable).map(o=>[+o.d,o.s,o.e,o.c,o.r||'']);if(tt.length){S.timetable=tt;TT=S.timetable}}S.updated=j.updated||0;if(j.settings){['teacher','school','year'].forEach(k=>{if(j.settings[k])S.settings[k]=j.settings[k]})}
+ if(j.classes)S.classes=Object.values(j.classes).sort((a,b)=>(a.n||0)-(b.n||0)).map(clsIn);else if(!S.classes.length)S.classes=clone(DEFAULT_CLASSES);rebuild();
+ S.courses=Object.fromEntries(Object.entries(j.courses||{}).map(([k,v])=>[k,{items:Object.values((v&&v.items)||{})}]));if(j.timetable){const tt=Object.values(j.timetable).map(o=>[+o.d,o.s,o.e,o.c,o.r||'']);if(tt.length){S.timetable=tt;TT=S.timetable}}S.updated=j.updated||0;if(j.settings){['teacher','school','year','subject'].forEach(k=>{if(j.settings[k])S.settings[k]=j.settings[k]})}
  persist();return true}
 async function viewerRefresh(){try{if(applyRemote(await pull(VIEW)))render()}catch(e){toast('Hors ligne – dernière version affichée')}}
 
@@ -450,7 +500,7 @@ function saveCourse(ch){const old=courseOf(ch),used=new Set();
 const ACT={
  tab:el=>{tab=el.dataset.v;render()},
  filter:el=>{fClass=el.dataset.v;render()},
- new:()=>openEditor(null,{classId:fClass!=='all'?fClass:'c4'}),
+ new:()=>S.classes.length?openEditor(null,{classId:fClass!=='all'?fClass:firstClass()}):toast('Ajoutez d’abord une classe (Réglages)'),
  fill:el=>openEditor(null,{classId:el.dataset.c,date:el.dataset.d,start:el.dataset.s,end:el.dataset.e}),
  edit:el=>openEditor(el.dataset.id),
  save:el=>saveSession(el.dataset.id||null),
@@ -461,10 +511,11 @@ const ACT={
  restore:async()=>{const u=S.settings.dbUrl;if(!u)return toast('Renseignez l’URL de la base');if(!confirm('Remplacer les données de cet appareil par celles du serveur ?'))return;
   try{if(applyRemote(await pull(u))){render();toast('Données récupérées')}else toast('Le serveur est vide')}catch(e){toast('Échec : '+e.message)}},
  copy:()=>navigator.clipboard.writeText(shareLink()).then(()=>toast('Lien copié')),
- share:()=>navigator.share?navigator.share({title:'Cahier de textes – Mathématiques',url:shareLink()}).catch(()=>{}):ACT.copy(),
- export:()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify({sessions:S.sessions,courses:S.courses,timetable:S.timetable,settings:{teacher:S.settings.teacher,school:S.settings.school,year:S.settings.year}},null,1)],{type:'application/json'}));a.download='cahier-de-textes-'+today()+'.json';a.click()},
+ share:()=>navigator.share?navigator.share({title:'Cahier de textes – '+S.settings.subject,url:shareLink()}).catch(()=>{}):ACT.copy(),
+ export:()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify({sessions:S.sessions,courses:S.courses,timetable:S.timetable,classes:S.classes,settings:{teacher:S.settings.teacher,school:S.settings.school,year:S.settings.year}},null,1)],{type:'application/json'}));a.download='cahier-de-textes-'+today()+'.json';a.click()},
  import:()=>$('#file').click(),
- ttnew:()=>openSlot(null),ttedit:el=>openSlot(+el.dataset.i),
+ clsnew:()=>openClass(null),clsedit:el=>openClass(el.dataset.id),clssave:el=>saveClass(el.dataset.id||null),clsdel:el=>delClass(el.dataset.id),
+ ttnew:()=>S.classes.length?openSlot(null):toast('Ajoutez d’abord une classe'),ttedit:el=>openSlot(+el.dataset.i),
  ttsave:el=>{const i=el.dataset.i===''?null:+el.dataset.i,t=[+$('#sd').value,$('#ss').value,$('#se').value,$('#sc').value,$('#sr').value.trim()];
   if(!t[1]||!t[2]||toMin(t[2])<=toMin(t[1]))return toast('Vérifiez les heures');
   if(i==null)S.timetable.push(t);else S.timetable[i]=t;save();closeSheet();render();toast('Emploi du temps enregistré')},
@@ -477,7 +528,7 @@ const ACT={
 document.addEventListener('click',e=>{const el=e.target.closest('[data-act]');if(el&&ACT[el.dataset.act])ACT[el.dataset.act](el);if(e.target.id==='sheetWrap')closeSheet()});
 document.addEventListener('input',e=>{const k=e.target.dataset?.set;if(k){S.settings[k]=e.target.value.trim();if(k==='dbUrl'||k==='apiKey'||k==='email'||k==='password')tok={v:'',exp:0};persist()}});
 document.addEventListener('change',e=>{
- if(e.target.dataset?.set){const k=e.target.dataset.set;if(['teacher','school','year'].includes(k)){S.updated=Date.now();persist();schedulePush()}if(k==='dbUrl')render()}
+ if(e.target.dataset?.set){const k=e.target.dataset.set;if(['teacher','school','year','subject'].includes(k)){S.updated=Date.now();persist();schedulePush()}if(k==='dbUrl')render()}
  if(e.target.dataset?.part){const it=courseOf($('#fch').value).find(i=>i.id===e.target.dataset.part);
   if(it){const ta=$('#fx'),ls=ta.value.split('\n').filter(l=>l.trim()),ix=ls.findIndex(l=>l.replace(/^\s*[-•*·]\s*/,'').trim()===it.t);
    if(e.target.checked){if(ix<0)ls.push(it.t)}else if(ix>=0)ls.splice(ix,1);ta.value=ls.join('\n')}}
@@ -485,7 +536,7 @@ document.addEventListener('change',e=>{
  if(e.target.id==='cb'&&EXT)fillFromExt();
  if(e.target.id==='file'&&e.target.files[0]){const r=new FileReader();r.onload=()=>{try{const j=JSON.parse(r.result);if(!Array.isArray(j.sessions)&&!j.sessions)throw 0;
   const arr=Array.isArray(j.sessions)?j.sessions:Object.values(j.sessions);if(!confirm(`Importer ${arr.length} séance(s) et remplacer les données actuelles ?`))return;
-  S.sessions=arr;if(j.courses)S.courses=j.courses;if(Array.isArray(j.timetable)&&j.timetable.length){S.timetable=j.timetable;TT=S.timetable}save();render();toast('Import terminé')}catch(x){toast('Fichier invalide')}};r.readAsText(e.target.files[0])}});
+  S.sessions=arr;if(Array.isArray(j.classes)&&j.classes.length){S.classes=j.classes;rebuild()}if(j.courses)S.courses=j.courses;if(Array.isArray(j.timetable)&&j.timetable.length){S.timetable=j.timetable;TT=S.timetable}save();render();toast('Import terminé')}catch(x){toast('Fichier invalide')}};r.readAsText(e.target.files[0])}});
 window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferred=e;if(tab==='settings')render()});
 window.addEventListener('online',()=>{if(pending)push();if(VIEW)viewerRefresh()});
 window.addEventListener('hashchange',()=>location.reload());
